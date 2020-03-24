@@ -76,6 +76,15 @@ TEST_F(DBTest, ScanFunctionality)
     ASSERT_EQ(vals.size(), 2);
 }
 
+TEST_F(DBTest, Add2Layer)
+{
+    // write t-1 parts to layer 1
+    // write t-2 parts to layer 2
+    // add 1 part to layer 1
+    // check if layer 1 has 0 parts
+    // and layer 2 has t-1 parts
+}
+
 
 int main(int argc, char **argv)
 {

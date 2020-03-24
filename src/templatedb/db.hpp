@@ -8,6 +8,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <vector>
+#include <utility> 
 
 #include "templatedb/operation.hpp"
 
@@ -61,12 +62,27 @@ public:
 
     std::vector<Value> execute_op(Operation op);
 
+    // added
+    int T = 2;
+    int maxsize = 10; // size of nth layer = maxsize * n * T
+
 private:
     std::fstream file;
     std::unordered_map<int, Value> table;
     size_t value_dimensions = 0;
     
     bool write_to_file();
+
+    // added
+    // adding an array in nth layer
+    void add2layer(
+        std::vector<std::pair<int, Value>> arr, int nth_layer);
+
+    void write2layer(int n);
+    void merge_layer(int n);
+
+    std::unordered_map<int, int> layer2parts;
+    // how many parts does the nth layer have
 };
 
 }   // namespace templatedb
