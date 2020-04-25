@@ -3,6 +3,7 @@
 
 #include "gtest/gtest.h"
 #include "templatedb/db.hpp"
+#include "templatedb/bplustree.hpp"
 
 
 class DBTest : public ::testing::Test
@@ -83,6 +84,19 @@ TEST_F(DBTest, Add2Layer)
     // add 1 part to layer 1
     // check if layer 1 has 0 parts
     // and layer 2 has t-1 parts
+}
+
+TEST_F(DBTest, TreeInsert)
+{
+    std::vector<int> input_keys{1,3,5,7,9}; 
+    BPlusTree *root = new BPlusTree;
+    for (
+        std::vector<int>::iterator it = input_keys.begin(); 
+        it != input_keys.end(); 
+        ++it) {
+        insert(root, *it, ValuePtr{1});
+    }
+    std::cout << "Done" << std::endl;
 }
 
 

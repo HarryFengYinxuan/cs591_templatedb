@@ -25,6 +25,7 @@ void BloomFilter::makeBloomFilter(){
 	bf_vec.resize(size, 0);
 }
 
+// writing a key into the filter
 void BloomFilter::program( string key ){
 	vector<int> index( numIndex, 0 );
 	getIndex( key, &index );
@@ -34,6 +35,7 @@ void BloomFilter::program( string key ){
 	}
 }
 
+// check if the key is present in the filter
 bool BloomFilter::query( string key ){
 	vector<int> index( numIndex, 0 );
 	getIndex( key, &index );
@@ -46,6 +48,7 @@ bool BloomFilter::query( string key ){
 	return true; // positive
 }
 
+// helper function to hash the key
 void BloomFilter::getIndex( string key, vector<int>* index ){
 	unsigned int h = MurmurHash2( key.c_str(), key.size(), 0xbc9f1d34 );
 

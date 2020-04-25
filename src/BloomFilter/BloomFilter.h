@@ -10,10 +10,13 @@ class BloomFilter {
 public:
 	BloomFilter();
 	BloomFilter( int numElement_, int bitsPerElement_ );
+	// those parameters affect the filter vector
 	int numElement;
 	int bitsPerElement;
 
+	// writing key
 	void program(string key);
+	// estimating membership of key
 	bool query(string key);
 
 	int getIndexNum();

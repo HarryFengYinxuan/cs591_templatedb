@@ -26,7 +26,7 @@ Operation::Operation(op_code _type, int _key, std::vector<int> & _args)
     args = _args;
 }
 
-
+// parsing op from file
 std::vector<Operation> Operation::ops_from_file(std::string file_name)
 {
     std::ifstream fid(file_name);
