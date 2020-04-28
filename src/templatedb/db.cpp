@@ -3,11 +3,32 @@
 using namespace std; 
 using namespace templatedb;
 
-// Compares two intervals according to staring times. 
-bool compare_key(pair<int, Value> i1, pair<int, Value> i2) 
-{ 
-    return (i1.first < i2.first); 
-} 
+string keyvalue2str(pair<int,Value> p) {
+    ostringstream line;
+    line << p.first << ",";
+    copy(
+        p.second.items.begin(), 
+        p.second.items.end() - 1, 
+        ostream_iterator<int>(line, ","));
+    line << p.second.items.back();
+    return line.str();
+}
+
+pair<int,Value> parse2keyvalue(string str) {
+    stringstream linestream(str);
+    string item;
+
+    getline(linestream, item, ',');
+    int key = stoi(item);
+    vector<int> items;
+    while(getline(linestream, item, ','))
+    {
+        items.push_back(stoi(item));
+    }
+    Value v(items);
+    v.null = false;
+    return make_pair(key, v);
+}
 
 // standard api
 Value DB::get(int key)
@@ -20,100 +41,216 @@ Value DB::get(int key)
     return get_from_level(key, 1);
 }
 
+// read a line from ptr of datafile fn, implies not null
+Value DB::get_from_file(string fn, ValueIndex ptr) {
+    // open data file
+    ifstream datafile (fn, ios::binary);
+    // seek ptr
+    datafile.seekg(ptr.ptr);
+    // read line, parse it
+    string line;
+    getline(datafile, line);
+    return parse2keyvalue(line).second;
+}
+
+vector<string> DB::get_level_fn(int level) {
+    // a folder for each level
+    // read the meta info, each line has a file
+    string folder = to_string(level);
+    ifstream myfile (folder + "/.meta", ios::binary);
+    string item;
+    vector<string> ret;
+    while(getline(myfile, item))
+    {
+        ret.push_back(item);
+    }
+    return ret;
+}
+
+void DB::update_meta(int level, vector<string> new_meta) {
+    // a folder for each level
+    // read the meta info, each line has a file
+    string folder = to_string(level);
+    ofstream myfile (folder + "/.meta", ios::binary);
+    for (auto item: new_meta) {
+        myfile << item << endl;
+    }
+}
+
 // find the value of the corresponding key in level
 Value DB::get_from_level(int key, int level) {
     // todo
-    // find in this level by binary search
-    // if fails, try next level
-
-    // use bloom filter to check
+    // get all components of the level
+    vector<string> fn_arr = get_level_fn(level);
+    // from the last one, use b+ tree
+    while (!fn_arr.empty())
+    {
+        // lets skip bloomfilter for now
+        // restore from {fn_arr.back()}.bpt
+        BPlusTree* root = restore(fn_arr.back() + ".bpt"); 
+        // search the tree
+        ValueIndex ptr = search(root, key);
+        // if found, return. else keep going
+        if (!ptr.null) {
+            return get_from_file(fn_arr.back() + ".data", ptr);
+        }
+        fn_arr.pop_back();
+    }
+    // if not found, check if there is another level
+    if (!get_level_fn(level+1).empty()) {
+        return get_from_level(key, level+1);
+    }
+    // checked the last level, nothing found
     return Value(false);
 }
 
-// write arr as a component to level
-void DB::add2level(
-    vector<pair<int, Value>> arr, 
-    int level) 
-    {
-        // appending a file to a level
-        // are we just changing its name?
-        if (policy == 0) {
-            // leveling
-            // we added to the new level, so just merge
-            merge_level(level);
-            // the # of cmpnnts is always 1
-            // if too big, add to next level
-        } else if (policy == 1) {
-            // tiering
-            // we merged and then adding to the next level
-            // as a component, we are done
-            level2components[level]++;
-            // if too big, merge and add to next level
-        }
-        // // put the whole arr at the end of the level
-        // level2components[nth_level]++;
-        // write2level(arr, nth_level, level2components[nth_level]);
-        
-        // if (level2components[nth_level] < T - 1) 
-        // {
-        //     // if that level now has t parts, add the whole
-        //     // arr to the next level
-        //     vector<pair<int, Value>> new_arr = 
-        //         merge_level(n);
-        //     write2level(new_arr, nth_level+1, 
-        //         level2components[nth_level+1]);
-        //     // delete all files of this level
-        //     level2components[nth_level] = 0;
-        // } 
-    }
+void clear_level(int level) {
 
-void DB::merge_level(int n)
-{
-    // todo
-    // if leveling, then try putting level L in the end
-    // of level L+1, and then merge that level
-
-    // i guess this merges in place, and then it requires
-    // putting this into the next level if tiering
-
-    // open all components on the same level, open a new file
-    // repeatedly find the smallest yet to append 
-
-    // anti matter?
 }
 
-// // maybe no need for this func
-// void DB::write2level(
-//     vector<pair<int, Value>> arr, 
-//     int nth_level, int part_num) 
-// {
-//     // todo: partitioning?
-//     // fstream levelout is open file corresponding to 
-//     // nth_level and part_num
+// write arr as a component to level
+// mainly called from the memory to append to level 1
+void DB::add2level(vector<pair<int, Value>> arr, int level) {
+    vector<string> files = get_level_fn(level);
+    string comp_name = to_string(level) + "/" + 
+        to_string(files.size());
+    // writing a new file to level, and make tree
+    streampos pos;
+    ofstream comp_file (comp_name+".data", ios::binary);
+    BPlusTree *root = new_tree();
+    comp_file << arr.size() << endl;
+    for (auto pair: arr) {
+        pos = comp_file.tellp();
+        comp_file << keyvalue2str(pair) << "\n";
+        ValueIndex v = {
+            .null = false,
+            .ptr = pos,
+        };
+        insert(root, pair.first, v);
+    }
+    root -> fn = comp_name;
+    save_node(root);
+    // update meta
+    files.push_back(comp_name);
+    update_meta(level, files);
+    // actions depending on policy
+    if (policy == 0) {
+        // leveling
+        // we added to the new level, so just merge
+        merge_level(level);
+        // the # of cmpnnts is always 1
+        int comp_size = read_component_size(
+            to_string(level)+"/temp_merge");
+        if (comp_size > maxsize * pow(T-1, level)) {
+            // cannot fit another one, roll
+            copy2level(to_string(level)+"/temp_merge", level+1);
+            clear_level(level);
+        }
+        // if too big, add to next level
+    } else if (policy == 1) {
+        // tiering
+        // we merged and then adding to the next level
+        // as a component, we are done
+        if (++level2components[level] > T) {
+            // if too big, merge and add to next level
+            merge_level(level);
+            // merge it, call it temp merged file
+            copy2level(to_string(level)+"/temp_merge", level+1);
+            // delete all data related files in this level
+            clear_level(level);
+        }
 
-//     // copied from write_to_file()
-//     level_out.clear();
-//     level_out.seekg(0, ios::beg);
+    }
+}
 
-//     string header = 
-//         to_string(table.size()) + 
-//         ',' + to_string(value_dimensions) + '\n';
-//     // level_out << header;
-//     level_out << to_string(arr.size());
-//     for(auto item: arr)
-//     {
-//         ostringstream line;
-//         copy(
-//             item.second.items.begin(), 
-//             item.second.items.end() - 1, 
-//             ostream_iterator<int>(line, ","));
-//         line << item.second.items.back();
-//         string value(line.str());
-//         level_out << item.first << ':' << value << '\n';
-//     }
+// fn is the component name
+int read_component_size(string fn) {
+    ifstream comp_file (fn+".data", ios::binary);
+    string line;
+    getline(comp_file, line);
+    return stoi(line);
+}
 
-//     return true;
-// }
+// move a preexisting component to next level
+// same merge policy here
+void DB::copy2level(string from, int level) {
+    // handle possible merge
+    vector<string> files = get_level_fn(level);
+    copy_file(
+        from + ".bpt", 
+        to_string(level) + "/" + 
+        to_string(files.size()) + ".bpt");
+    copy_file(
+        from + ".data", 
+        to_string(level) + "/" + 
+        to_string(files.size()) + ".data");
+    files.push_back(to_string(files.size()));
+    update_meta(level, files);
+}
+
+void copy_file(string path1, string path2) {
+    std::ifstream  src(path1, std::ios::binary);
+    std::ofstream  dst(path2,   std::ios::binary);
+    dst << src.rdbuf();
+}
+
+// merge all data files in this level to temp, remake tree
+void DB::merge_level(int level)
+{
+    // todo
+    // merge into 
+    ofstream out(to_string(level)+"/temp_merge.data");
+    streampos pos;
+    string line;
+    vector<string> files = get_level_fn(level);
+    vector<ifstream> streams;
+    vector<pair<int, Value>> pairs; 
+    int total_size = 0;
+    // pairs[i] is the current read from streams[i]
+
+    for (auto file: files) {
+        streams.push_back(ifstream(file+".data", ios::binary));
+        getline(streams[streams.size()], line); // meta
+        total_size += stoi(line);
+        getline(streams[streams.size()], line);
+        pairs.push_back(parse2keyvalue(line));
+    }
+
+    int active_streams = files.size();
+    BPlusTree *root = new_tree();
+    out << total_size << endl;
+    // change this into something that compares the pairs
+    // with the same key from  different components but only
+    // inserts one
+    while (active_streams > 0) {
+        pair<int, Value> min_pair = 
+            make_pair(MAX_INT, Value(true));
+        int min_index = -1;
+        // we find the latest one with smallest key
+        for (int i=0; i < files.size(); i++) {
+            if (pairs[i].first <= min_pair.first) {
+                min_index = i;
+                min_pair = pairs[i];
+            }
+        }
+        pos = out.tellp();
+        ValueIndex v = {
+            .null = false, .ptr = pos,
+        };
+        out << keyvalue2str(min_pair);
+        insert(root, min_pair.first, v);
+        if (getline(streams[min_index], line)) {
+            // more to read from here
+            pairs[min_index] = parse2keyvalue(line);
+        } else {
+            // this one is done, we use a dummy
+            pairs[min_index] = make_pair(MAX_INT, Value(true));
+            active_streams --;
+        }
+    }
+    root -> fn = "temp_merge";
+    save_node(root);
+}
 
 
 void DB::put(int key, Value val)
@@ -131,13 +268,12 @@ void DB::put(int key, Value val)
             arr.push_back(make_pair(it->first, it->second));
         }
         // sort arr
-        sort(arr.begin(), arr.end(), compare_key);
+        sort(
+            arr.begin(), arr.end(), 
+            [](pair<int, Value> a, pair<int, Value> b) {
+                return a.first > b.first;
+            });
         // write 2 a temp memory file, and append that file
-        // to level 1
-        // todo
-        // open level 1 file, write to it
-
-        // flush
         add2level(arr, 1);
         table.clear();
     }
@@ -177,9 +313,11 @@ vector<Value> DB::scan(int min_key, int max_key)
 void DB::del(int key)
 {
     // if in table
-    table.erase(key);
+    // table.erase(key);
     // and insert anti-matter
-    put(key, Value(false));
+    Value v;
+    v.visible = false;
+    table[key] = v;
 }
 
 
@@ -329,29 +467,24 @@ bool DB::write_to_file()
     return true;
 }
 
-void DB::write2component(
-    vector<pair<int, Value>> arr, string fn) {
-    // write to the actual file and to the B+ tree for indexing
-
-    ofstream myfile (fn, ios::binary);
-    string header = 
-        to_string(table.size()) + 
-        ',' + to_string(value_dimensions) + '\n';
-    myfile << header;
-    // todo get b+ tree
-
-    streampos pos;
-    for (auto item: arr) {
-        pos = myfile.tellp();
-        // insert key, pos to b+ tree
-        // write 2 file
-        ostringstream line;
-        copy(
-            item.second.items.begin(), 
-            item.second.items.end() - 1, 
-            ostream_iterator<int>(line, ","));
-        line << item.second.items.back();
-        string value(line.str());
-        file << item.first << ',' << value << '\n';
+void DB::clear_level(int level) {
+    vector<string> files = get_level_fn(level);
+    while (!files.empty()) {
+        remove((files.back()+".data").c_str());
+        remove((files.back()+".bpt").c_str());
+        files.pop_back();
     }
-} 
+    update_meta(level, files);
+}
+
+void DB::init() {
+    // init meta files
+    // boost::filesystem::exists(boost::filesystem::path("0"));
+    for (int level=1; level<=maxlvl; level++) {
+        string folder_name = to_string(level);
+        boost::filesystem::path folder = 
+            boost::filesystem::path(folder_name);
+        boost::filesystem::create_directories(folder);
+        ofstream myfile (folder_name + "/.meta", ios::binary);
+    }
+}

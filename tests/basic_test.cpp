@@ -2,8 +2,8 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+// #include "templatedb/bplustree.hpp"
 #include "templatedb/db.hpp"
-#include "templatedb/bplustree.hpp"
 
 
 class DBTest : public ::testing::Test
@@ -12,6 +12,7 @@ protected:
     templatedb::DB db0;
     templatedb::DB db1;
     templatedb::DB db2;
+    BPlusTree *root;
 
     templatedb::Value v1 = templatedb::Value({1, 2});
     templatedb::Value v2 = templatedb::Value({6, 10});
@@ -24,6 +25,7 @@ protected:
         db1.put(2, v1);
         db1.put(5, v2);
         db2.put(1024, v3);
+        root = new_tree();
     }
 };
 
@@ -52,13 +54,14 @@ TEST_F(DBTest, PutAndGetFunctionality)
 
 TEST_F(DBTest, DeleteFunctionality)
 {
+    // after we del, there is anti-matter, size same
     db1.del(2);
-    EXPECT_EQ(db1.get(2), templatedb::Value(false));
-    EXPECT_EQ(db1.size(), 1);
+    EXPECT_EQ(db1.get(2).visible, false);
+    EXPECT_EQ(db1.size(), 2);
 
     db2.del(1024);
-    EXPECT_EQ(db2.get(1024), templatedb::Value(false));
-    EXPECT_EQ(db2.size(), 0);
+    EXPECT_EQ(db2.get(1024).visible, false);
+    EXPECT_EQ(db2.size(), 1);
 }
 
 
@@ -77,26 +80,35 @@ TEST_F(DBTest, ScanFunctionality)
     ASSERT_EQ(vals.size(), 2);
 }
 
-TEST_F(DBTest, Add2Layer)
-{
-    // write t-1 parts to layer 1
-    // write t-2 parts to layer 2
-    // add 1 part to layer 1
-    // check if layer 1 has 0 parts
-    // and layer 2 has t-1 parts
-}
-
 TEST_F(DBTest, TreeInsert)
 {
+    // basic split
     std::vector<int> input_keys{1,3,5,7,9}; 
-    BPlusTree *root = new BPlusTree;
     for (
         std::vector<int>::iterator it = input_keys.begin(); 
         it != input_keys.end(); 
         ++it) {
-        insert(root, *it, ValuePtr{1});
+        root = insert(root, *it, ValueIndex{1});
     }
-    std::cout << "Done" << std::endl;
+    ASSERT_EQ(root -> keys[0], 5);
+    ASSERT_EQ(root -> keys[1], -1);
+}
+
+TEST_F(DBTest, TreePersistence)
+{
+    // operations and then save and restore
+    std::vector<int> input_keys{1,3,5,7,9}; 
+    for (
+        std::vector<int>::iterator it = input_keys.begin(); 
+        it != input_keys.end(); 
+        ++it) {
+        root = insert(root, *it, ValueIndex{1});
+    }
+    root -> fn = "test_temp";
+    save_node(root);
+    BPlusTree *temp = restore("test_temp");
+    ASSERT_EQ(temp -> keys[0], 5);
+    ASSERT_EQ(temp -> keys[1], -1);
 }
 
 
