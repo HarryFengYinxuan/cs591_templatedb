@@ -91,10 +91,11 @@ int find_child(BPlusTree *node, int key) {
 }
 
 // resotre a bplustree from file recursively
-BPlusTree* restore(string fn) {
+// same path for save
+BPlusTree* restore(string fn, string path) {
     BPlusTree *ret = new BPlusTree;
     string line;
-    ifstream infile(fn+".bpt", ios::binary);
+    ifstream infile(path+fn+".bpt", ios::binary);
 
     getline(infile, line);
     ret -> is_leaf = line[0] == '1';
@@ -149,7 +150,7 @@ BPlusTree* restore(string fn) {
     for (int i=0; i < ret -> num_keys+1; i++) {
         if (!ret -> is_leaf) {
             string f = ret -> files[i];
-            ret -> children.push_back(restore(f));
+            ret -> children.push_back(restore(f, path));
         } else {
             ret -> children.push_back(NULL);
         }
@@ -157,31 +158,14 @@ BPlusTree* restore(string fn) {
     for (int i=ret -> num_keys; i < order; i++) {
         ret -> children.push_back(NULL);
     }
+    infile.close();
     return ret;
 }
 
-// // getting child node from node, because it could be a file
-// BPlusTree* get_child(BPlusTree *node, int child) {
-//     // if a child is in disk but not in memory, then its
-//     // chidlren ptr should be NULL, and its files[chidl]
-//     // is a valid file counter name, but not "null"
-//     if (node -> children[child] != NULL) {
-//         return node -> children[child];
-//     } else {
-//         // get child from file
-//         string line; // buffer
-//         BPlusTree *ret = new BPlusTree;
-//         ifstream myfile (node -> fn, ios::binary);
-
-//         getline(myfile, line);
-//         ret -> keys.push_back();
-
-//     }
-// }
-
 // make node and its descendants into a file
-void save_node(BPlusTree *node) {
-    ofstream outfile(node -> fn + ".bpt", ios::binary);
+// path is basically folder
+void save_node(BPlusTree *node, string path) {
+    ofstream outfile(path + node -> fn + ".bpt", ios::binary);
     outfile << node -> is_leaf << "\n";
     outfile << node -> fn << "\n";
     outfile << node -> num_keys << "\n";
@@ -196,13 +180,13 @@ void save_node(BPlusTree *node) {
 
     if (!node -> is_leaf) {
         for (int i=0; i < node -> num_keys + 1; i++) {
-            BPlusTree *c = node -> children[i];
-            outfile << c -> fn;
+            // BPlusTree *c = node -> children[i];
+            outfile << node -> children[i] -> fn;
 
             if (i < node -> num_keys) {
                 outfile << ",";
             }
-            save_node(c);
+            save_node(node -> children[i], path);
         }
         outfile << "\n";
     }
@@ -219,6 +203,7 @@ void save_node(BPlusTree *node) {
         }
     }
     outfile << "\n";
+    outfile.close();
 }
 // if key in vector, find its location, only for leaf
 // if not found, return len
@@ -274,9 +259,11 @@ void _insert2leaf(BPlusTree *node, int key, ValueIndex value) {
 }
 
 // for internal node, add child, and shift
-void _insert_child(BPlusTree* node, BPlusTree* new_child) {
+void _insert_child(BPlusTree* node, int key, 
+    BPlusTree* new_child) 
+{
     // child was full, find index for new key
-    int new_key = new_child -> keys[0]; 
+    // int key = new_child -> keys[0]; 
     // it should have at least 1 key
     int new_index;
     for (
@@ -284,7 +271,7 @@ void _insert_child(BPlusTree* node, BPlusTree* new_child) {
         new_index < node -> num_keys; 
         new_index ++) 
     {
-        if (new_key < node->keys[new_index]) break;
+        if (key < node->keys[new_index]) break;
     }
 
     // shifting everything to the right
@@ -296,14 +283,16 @@ void _insert_child(BPlusTree* node, BPlusTree* new_child) {
         new_index < node -> num_keys; 
         new_index ++) 
     {
+        // key is assigned to current
+        // current is shifted so temp is assigned to it
         temp_key = node -> keys[new_index];
         temp_tree = node -> children[new_index+1];
         // last temp is NULL
 
-        node -> keys[new_index] = new_key;
+        node -> keys[new_index] = key;
         node -> children[new_index+1] = new_child;
 
-        new_key = temp_key;
+        key = temp_key;
         new_child = temp_tree;
     }
 }
@@ -312,6 +301,19 @@ void _insert_child(BPlusTree* node, BPlusTree* new_child) {
 void _insert_split_leaf(
     BPlusTree *node, int key, ValueIndex value, ReturnStruct *ret) 
     {
+    // if duplicates, update
+    vector<int>::iterator begin = node->keys.begin();
+    vector<int>::iterator end = 
+        next(begin, node->num_keys);
+    int loc = find_key(node, key);
+    if (loc != node -> num_keys) { // duplicate
+        // update
+        node -> keys[loc] = key;
+        node -> values[loc] = value;
+        return;
+    }
+    // not duplicate
+
     // create a temp key value pair, then sort
     // add to it, and sort
     node -> keys.push_back(key);
@@ -336,12 +338,12 @@ void _insert_split_leaf(
         right_values.push_back(node -> values[i]);
     }
     // padding left
-    for (int j=mid; j < total_len; j++) {
+    for (int j=mid; j < order; j++) {
         left_keys.push_back(-1);
         left_values.push_back(ValueIndex{0});
     }
     // padding right
-    for (int j=0; j < mid; j++) {
+    for (int j=0; j < mid-1; j++) {
         right_keys.push_back(-1);
         right_values.push_back(ValueIndex{0});
     }
@@ -360,17 +362,19 @@ void _insert_split_leaf(
     return;
 }
 
-// call this when we need to add child to internal
-// but internal is full, we split
+// call this when we need to add old_child to node
+// (node is internal), but node is full, we split
 void _insert_split_internal(
     BPlusTree *node, int key, ValueIndex value, 
-    BPlusTree *old_child, ReturnStruct *ret) {
+    BPlusTree *old_child, ReturnStruct *ret) 
+{
+    // does it ever use value?
 
     // append normally, and then split, effectively sort
     node -> keys.push_back(-1); // dummy 
     node -> children.push_back(NULL); // dummy
-    node -> num_keys ++;
-    _insert_child(node, old_child);
+    // node -> num_keys ++;
+    _insert_child(node, key, old_child);
 
     // spliting
     vector<int> left_keys;
@@ -391,7 +395,17 @@ void _insert_split_internal(
         right_keys.push_back(node -> keys[i]);
         right_children.push_back(node -> children[i+1]);
     }
+    // padding
+    while (left_keys.size() < order) {
+        left_keys.push_back(-1);
+        left_children.push_back(NULL);
+    }
+    while (right_keys.size() < order) {
+        right_keys.push_back(-1);
+        right_children.push_back(NULL);
+    }
 
+    ret -> key = node -> keys[mid];
     // old internal node
     node -> keys = left_keys;
     node -> num_keys = mid;
@@ -402,15 +416,16 @@ void _insert_split_internal(
     new_child -> keys = right_keys;
     new_child -> num_keys = total_len-mid-1; // = mid
     new_child -> children = right_children;
+    new_child -> is_leaf = false;
     ret -> node = new_child;
-    ret -> key = node -> keys[mid];
     return;
 }
 
 // if max, return the newly allocated node ptr
 void _insert(
     BPlusTree *node, int key, ValueIndex value,
-    ReturnStruct *ret) {
+    ReturnStruct *ret) 
+{
     if (node -> num_keys < order) { // have room
         // load all chidlren
         if (node -> is_leaf) { // leaf
@@ -426,7 +441,7 @@ void _insert(
 
             if (new_child != NULL) {
                 // child splited, but we have space
-                _insert_child(node, new_child);
+                _insert_child(node, new_key, new_child);
             }
         }
         ret -> node = NULL; // no split
@@ -449,9 +464,10 @@ void _insert(
             if (new_child != NULL) {
                 // splited
                 _insert_split_internal(
-                    node, res->key, value, res->node, ret);
+                    node, res->key, value, res->node, res);
                 // add node to self and split
-                // ret = res;
+                ret -> key = res -> key;
+                ret -> node = res -> node;
                 return;
             } else { 
                 // no more action needed
@@ -484,11 +500,14 @@ BPlusTree* insert(BPlusTree *root, int key, ValueIndex value) {
 
 ValueIndex search(BPlusTree *node, int key) {
     if (node -> is_leaf) {
+        // if leaf just search keys
         for (int i=0; i < node -> num_keys; i++) {
             if (node -> keys[i] == key) {
+                // got it
                 return node -> values[i];
             }
         }
+        // not found
         ValueIndex ret = {
             .null = true,
         };
@@ -497,6 +516,7 @@ ValueIndex search(BPlusTree *node, int key) {
         // find in children
         return search(
             node -> children[find_child(node, key)], 
-            key);
+            key
+        );
     }
 }

@@ -10,6 +10,7 @@
 #include <vector>
 #include <utility> 
 #include <unistd.h>
+#include <math.h> 
 #include <boost/lambda/lambda.hpp>
 #include <boost/filesystem.hpp>
 #include <cstdio>
@@ -60,7 +61,7 @@ class DB
 public:
     db_status status;
 
-    DB() {init();};
+    DB() {init(0);};
     ~DB() {close();};
 
     // basic operations
@@ -86,7 +87,7 @@ public:
 
     // added
     int policy; // 0 = leveling; 1 = tiering
-    int T = 2;
+    int T = 2; // the parameter
     int maxsize = 10; // # of value in memory component
     int maxlvl = 3;
     // int max_level; // need this if realistic
@@ -99,7 +100,7 @@ private:
     
     bool write_to_file();
 
-    void init();
+    void init(int p); // choose policy
 
     // added
     // adding an array in nth level
@@ -116,10 +117,10 @@ private:
     // std::pair<int, int> parse_fn(string fn); // parse filename
     // list files. it return {fn}. {fn}.bpt will be the tree
     // {fn}.data will be the actual data
-    void copy2level(std::string path1, int level);
+    void move2level(std::string path1, int level);
 
     // how many components does the nth level have
-    std::unordered_map<int, int> level2components;
+    // std::unordered_map<int, int> level2components;
     Value get_from_file(std::string fn, ValueIndex ptr);
     void update_meta(int level, 
         std::vector<std::string> new_meta);

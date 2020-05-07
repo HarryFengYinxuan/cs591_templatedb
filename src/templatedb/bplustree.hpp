@@ -33,7 +33,7 @@ BPlusTree* new_tree();
 BPlusTree* insert(BPlusTree *root, int key, 
     ValueIndex value);
 ValueIndex search(BPlusTree *node, int key);
-BPlusTree* restore(std::string fn);
-void save_node(BPlusTree *node);
+BPlusTree* restore(std::string fn, std::string path);
+void save_node(BPlusTree *node, std::string path);
 
 
