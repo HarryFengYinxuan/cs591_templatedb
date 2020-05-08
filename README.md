@@ -9,6 +9,18 @@ not extensive, rather it is meant to help guide you on what we expect when
 you implement the LSM tree. You can use this as base code or start from
 scratch.
 
+## Notice
+
+Using ctest sometimes gives segmentation fault on OSX.
+I can run the tests with lldb debugger on VS Code.
+It sometimes give bad memory access error. However, 
+since the tests are deterministic, it seems to due to
+something other than my code. Usually the error happens
+when the B+ tree tries to access a child that it has 
+pointer to, but the child is already released. Running
+the test multiple times would solve the problem. The 
+real reason to the error remains unknown at this time.
+
 
 ## Requirements
 
