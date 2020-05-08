@@ -1,9 +1,12 @@
 #include <iostream>
 #include <vector>
+#include <chrono>
 
 #include "gtest/gtest.h"
 // #include "templatedb/bplustree.hpp"
 #include "templatedb/db.hpp"
+#include <fstream>
+#include <iostream>
 
 
 class DBTest : public ::testing::Test
@@ -17,6 +20,7 @@ protected:
     templatedb::Value v2 = templatedb::Value({6, 10});
     templatedb::Value v3 = templatedb::Value({1, 1, 5, 7});
     templatedb::Value v4 = templatedb::Value({13, 176});
+    int chunk_size;
 
 
     void SetUp() override 
@@ -24,6 +28,9 @@ protected:
         db1.put(2, v1);
         db1.put(5, v2);
         db2.put(1024, v3);
+        db0.maxsize = 13;
+        db0.T = 2;
+        chunk_size = db0.maxsize;
     }
 };
 
@@ -186,6 +193,11 @@ TEST_F(DBTest, PutAndGetFunctionalityInMemory)
     int kv_range = 100;
     int key;
     templatedb::Value val;
+
+    std::ofstream myfile(
+        "result/PutAndGetFunctionalityInMemory",
+        std::ios::binary
+    );
     // lets make one item per value
     while (1) {
         key = std::rand()%kv_range;
@@ -197,8 +209,12 @@ TEST_F(DBTest, PutAndGetFunctionalityInMemory)
         input_vals.push_back(val);
         result[key] = val;
 
-        if (result.size() < db0.maxsize) {
+        if (result.size() < chunk_size) {
+            auto start = std::chrono::high_resolution_clock::now();
             db0.put(key, val);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            myfile << "put " << duration << std::endl;
         } else {
             // too big, lets stop
             result.erase(key);
@@ -209,22 +225,29 @@ TEST_F(DBTest, PutAndGetFunctionalityInMemory)
 
     // searching in memory
     for( const auto& kv_pair : result ) {
+        
+        auto start = std::chrono::high_resolution_clock::now();
+        val = db0.get(kv_pair.first);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        myfile << "get " << duration << std::endl;
         ASSERT_EQ(
-            db0.get(kv_pair.first).visible, 
+            val.visible, 
             true
         );
         ASSERT_EQ(
-            db0.get(kv_pair.first), 
+            val, 
             kv_pair.second
         );
     }
     db0.clear_db();
+    myfile.close();
 
     // we dont search for non-existent stuff in the testcase
     // because it will try to reach the disk
 }
 
-
+// no perf
 TEST_F(DBTest, DeleteNonExistentInMemory)
 {
     std:srand(0);
@@ -240,7 +263,7 @@ TEST_F(DBTest, DeleteNonExistentInMemory)
         input_keys.push_back(key);
         result[key] = val;
 
-        if (result.size() < db0.maxsize) {
+        if (result.size() < chunk_size) {
             // keep going
         } else {
             // too big, lets stop
@@ -260,7 +283,7 @@ TEST_F(DBTest, DeleteNonExistentInMemory)
     db0.clear_db();
 }
 
-
+// no perf
 TEST_F(DBTest, DeleteExistentInMemory)
 {
     std:srand(0);
@@ -281,7 +304,7 @@ TEST_F(DBTest, DeleteExistentInMemory)
         input_vals.push_back(val);
         result[key] = val;
 
-        if (result.size() < db0.maxsize) {
+        if (result.size() < chunk_size) {
             db0.put(key, val);
         } else {
             // too big, lets stop
@@ -316,6 +339,11 @@ TEST_F(DBTest, PutAndGetFunctionalityOnDiskLvling)
     int kv_range = 100;
     int key;
     templatedb::Value val;
+
+    std::ofstream myfile(
+        "result/PutAndGetFunctionalityOnDiskLvling",
+        std::ios::binary
+    );
     // lets make one item per value
     while (1) {
         key = std::rand()%kv_range;
@@ -327,11 +355,20 @@ TEST_F(DBTest, PutAndGetFunctionalityOnDiskLvling)
         input_vals.push_back(val);
         result[key] = val;
 
-        if (result.size() < db0.maxsize) {
+        if (result.size() < chunk_size) {
+            auto start = std::chrono::high_resolution_clock::now();
             db0.put(key, val);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            myfile << "put " << duration << std::endl;
         } else {
             // put one more to exceed the limit, then stop
+            
+            auto start = std::chrono::high_resolution_clock::now();
             db0.put(key, val);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            myfile << "put " << duration << std::endl;
             // result.erase(key);
             break;
         }
@@ -340,16 +377,23 @@ TEST_F(DBTest, PutAndGetFunctionalityOnDiskLvling)
 
     // searching on disk
     for( const auto& kv_pair : result ) {
+        
+        auto start = std::chrono::high_resolution_clock::now();
+        val = db0.get(kv_pair.first);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        myfile << "get " << duration << std::endl;
         ASSERT_EQ(
-            db0.get(kv_pair.first).visible, 
+            val.visible, 
             true
         );
         ASSERT_EQ(
-            db0.get(kv_pair.first), 
+            val, 
             kv_pair.second
         );
     }
     db0.clear_db();
+    myfile.close();
 
     // we dont search for non-existent stuff in the testcase
     // because it will try to reach the disk
@@ -366,6 +410,11 @@ TEST_F(DBTest, PutAndGetFunctionalityOnDiskTiering)
     int kv_range = 100;
     int key;
     templatedb::Value val;
+
+    std::ofstream myfile(
+        "result/PutAndGetFunctionalityOnDiskTiering",
+        std::ios::binary
+    );
     // lets make one item per value
     while (1) {
         key = std::rand()%kv_range;
@@ -377,11 +426,19 @@ TEST_F(DBTest, PutAndGetFunctionalityOnDiskTiering)
         input_vals.push_back(val);
         result[key] = val;
 
-        if (result.size() < db0.maxsize) {
+        if (result.size() < chunk_size) {
+            auto start = std::chrono::high_resolution_clock::now();
             db0.put(key, val);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            myfile << "put " << duration << std::endl;
         } else {
             // put one more to exceed the limit, then stop
+            auto start = std::chrono::high_resolution_clock::now();
             db0.put(key, val);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            myfile << "put " << duration << std::endl;
             // result.erase(key);
             break;
         }
@@ -390,6 +447,11 @@ TEST_F(DBTest, PutAndGetFunctionalityOnDiskTiering)
 
     // searching on disk
     for( const auto& kv_pair : result ) {
+        auto start = std::chrono::high_resolution_clock::now();
+        val = db0.get(kv_pair.first);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        myfile << "get " << duration << std::endl;
         ASSERT_EQ(
             db0.get(kv_pair.first).visible, 
             true
@@ -400,6 +462,7 @@ TEST_F(DBTest, PutAndGetFunctionalityOnDiskTiering)
         );
     }
     db0.clear_db();
+    myfile.close();
 
     // we dont search for non-existent stuff in the testcase
     // because it will try to reach the disk
@@ -419,6 +482,11 @@ TEST_F(DBTest, PutAndGetFunctionality2OnDiskLvling)
     int kv_range = 100;
     int key;
     templatedb::Value val;
+
+    std::ofstream myfile(
+        "result/PutAndGetFunctionality2OnDiskLvling",
+        std::ios::binary
+    );
     // to mimic the behavior of components, when each result
     // table is full, it is appended to all_result, and a 
     // new table is created
@@ -436,11 +504,21 @@ TEST_F(DBTest, PutAndGetFunctionality2OnDiskLvling)
             result[key] = val;
             all_result[key] = val;
 
-            if (result.size() < db0.maxsize) {
+            if (result.size() < chunk_size) {
+                
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
             } else {
                 // put one more to exceed the limit, then stop
+                
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
                 // result.erase(key);
                 break;
             }
@@ -449,6 +527,11 @@ TEST_F(DBTest, PutAndGetFunctionality2OnDiskLvling)
 
     // searching on disk
     for( const auto& kv_pair : all_result ) {
+        auto start = std::chrono::high_resolution_clock::now();
+        val = db0.get(kv_pair.first);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        myfile << "get " << duration << std::endl;
         ASSERT_EQ(
             db0.get(kv_pair.first).visible, 
             true
@@ -459,6 +542,7 @@ TEST_F(DBTest, PutAndGetFunctionality2OnDiskLvling)
         );
     }
     db0.clear_db();
+    myfile.close();
     
 
     // we dont search for non-existent stuff in the testcase
@@ -476,6 +560,11 @@ TEST_F(DBTest, PutAndGetFunctionality2OnDiskTiering)
     int kv_range = 100;
     int key;
     templatedb::Value val;
+
+    std::ofstream myfile(
+        "result/PutAndGetFunctionality2OnDiskTiering",
+        std::ios::binary
+    );
     // to mimic the behavior of components, when each result
     // table is full, it is appended to all_result, and a 
     // new table is created
@@ -493,11 +582,19 @@ TEST_F(DBTest, PutAndGetFunctionality2OnDiskTiering)
             result[key] = val;
             all_result[key] = val;
 
-            if (result.size() < db0.maxsize) {
+            if (result.size() < chunk_size) {
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
             } else {
                 // put one more to exceed the limit, then stop
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
                 // result.erase(key);
                 break;
             }
@@ -506,6 +603,11 @@ TEST_F(DBTest, PutAndGetFunctionality2OnDiskTiering)
 
     // searching on disk
     for( const auto& kv_pair : all_result ) {
+        auto start = std::chrono::high_resolution_clock::now();
+        val = db0.get(kv_pair.first);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        myfile << "get " << duration << std::endl;
         ASSERT_EQ(
             db0.get(kv_pair.first).visible, 
             true
@@ -516,6 +618,7 @@ TEST_F(DBTest, PutAndGetFunctionality2OnDiskTiering)
         );
     }
     db0.clear_db();
+    myfile.close();
     
 
     // we dont search for non-existent stuff in the testcase
@@ -536,6 +639,11 @@ TEST_F(DBTest, PutAndGetFunctionality3OnDiskLvling)
     int kv_range = 100;
     int key;
     templatedb::Value val;
+
+    std::ofstream myfile(
+        "result/PutAndGetFunctionality3OnDiskLvling",
+        std::ios::binary
+    );
     // to mimic the behavior of components, when each result
     // table is full, it is appended to all_result, and a 
     // new table is created
@@ -553,11 +661,20 @@ TEST_F(DBTest, PutAndGetFunctionality3OnDiskLvling)
             result[key] = val;
             all_result[key] = val;
 
-            if (result.size() < db0.maxsize) {
+            if (result.size() < chunk_size) {
+                
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
             } else {
                 // put one more to exceed the limit, then stop
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
                 // result.erase(key);
                 break;
             }
@@ -566,6 +683,11 @@ TEST_F(DBTest, PutAndGetFunctionality3OnDiskLvling)
 
     // searching on disk
     for( const auto& kv_pair : all_result ) {
+        auto start = std::chrono::high_resolution_clock::now();
+        val = db0.get(kv_pair.first);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        myfile << "get " << duration << std::endl;
         ASSERT_EQ(
             db0.get(kv_pair.first).visible, 
             true
@@ -576,6 +698,7 @@ TEST_F(DBTest, PutAndGetFunctionality3OnDiskLvling)
         );
     }
     db0.clear_db();
+    myfile.close();
     
 
     // we dont search for non-existent stuff in the testcase
@@ -593,6 +716,11 @@ TEST_F(DBTest, PutAndGetFunctionality3OnDiskTiering)
     int kv_range = 100;
     int key;
     templatedb::Value val;
+
+    std::ofstream myfile(
+        "result/PutAndGetFunctionality3OnDiskTiering",
+        std::ios::binary
+    );
     // to mimic the behavior of components, when each result
     // table is full, it is appended to all_result, and a 
     // new table is created
@@ -610,11 +738,19 @@ TEST_F(DBTest, PutAndGetFunctionality3OnDiskTiering)
             result[key] = val;
             all_result[key] = val;
 
-            if (result.size() < db0.maxsize) {
+            if (result.size() < chunk_size) {
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
             } else {
                 // put one more to exceed the limit, then stop
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
                 // result.erase(key);
                 break;
             }
@@ -623,6 +759,11 @@ TEST_F(DBTest, PutAndGetFunctionality3OnDiskTiering)
 
     // searching on disk
     for( const auto& kv_pair : all_result ) {
+        auto start = std::chrono::high_resolution_clock::now();
+        val = db0.get(kv_pair.first);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        myfile << "get " << duration << std::endl;
         ASSERT_EQ(
             db0.get(kv_pair.first).visible, 
             true
@@ -633,6 +774,7 @@ TEST_F(DBTest, PutAndGetFunctionality3OnDiskTiering)
         );
     }
     db0.clear_db();
+    myfile.close();
     
 
     // we dont search for non-existent stuff in the testcase
@@ -654,6 +796,11 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskLvling)
     int kv_range = 100;
     int key;
     templatedb::Value val;
+
+    std::ofstream myfile(
+        "result/PutAndGetFunctionality4OnDiskLvling",
+        std::ios::binary
+    );
     // to mimic the behavior of components, when each result
     // table is full, it is appended to all_result, and a 
     // new table is created
@@ -671,11 +818,19 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskLvling)
             result[key] = val;
             all_result[key] = val;
 
-            if (result.size() < db0.maxsize) {
+            if (result.size() < chunk_size) {
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
             } else {
                 // put one more to exceed the limit, then stop
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
                 // result.erase(key);
                 break;
             }
@@ -694,8 +849,12 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskLvling)
         result[key] = val;
         all_result[key] = val;
 
-        if (result.size() < db0.maxsize) {
+        if (result.size() < chunk_size) {
+            auto start = std::chrono::high_resolution_clock::now();
             db0.put(key, val);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            myfile << "put " << duration << std::endl;
         } else {
             // put one more to exceed the limit, then stop
             all_result.erase(key);
@@ -705,6 +864,11 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskLvling)
 
     // searching
     for( const auto& kv_pair : all_result ) {
+        auto start = std::chrono::high_resolution_clock::now();
+        val = db0.get(kv_pair.first);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        myfile << "get " << duration << std::endl;
         ASSERT_EQ(
             db0.get(kv_pair.first).visible, 
             true
@@ -715,6 +879,7 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskLvling)
         );
     }
     db0.clear_db();
+    myfile.close();
     
 
     // we dont search for non-existent stuff in the testcase
@@ -733,6 +898,11 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskTiering)
     int kv_range = 100;
     int key;
     templatedb::Value val;
+
+    std::ofstream myfile(
+        "result/PutAndGetFunctionality4OnDiskTiering",
+        std::ios::binary
+    );
     // to mimic the behavior of components, when each result
     // table is full, it is appended to all_result, and a 
     // new table is created
@@ -750,11 +920,19 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskTiering)
             result[key] = val;
             all_result[key] = val;
 
-            if (result.size() < db0.maxsize) {
+            if (result.size() < chunk_size) {
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
             } else {
                 // put one more to exceed the limit, then stop
+                auto start = std::chrono::high_resolution_clock::now();
                 db0.put(key, val);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+                myfile << "put " << duration << std::endl;
                 // result.erase(key);
                 break;
             }
@@ -773,8 +951,12 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskTiering)
         result[key] = val;
         all_result[key] = val;
 
-        if (result.size() < db0.maxsize) {
+        if (result.size() < chunk_size) {
+            auto start = std::chrono::high_resolution_clock::now();
             db0.put(key, val);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            myfile << "put " << duration << std::endl;
         } else {
             // put one more to exceed the limit, then stop
             all_result.erase(key);
@@ -784,6 +966,11 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskTiering)
 
     // searching
     for( const auto& kv_pair : all_result ) {
+        auto start = std::chrono::high_resolution_clock::now();
+        val = db0.get(kv_pair.first);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        myfile << "get " << duration << std::endl;
         ASSERT_EQ(
             db0.get(kv_pair.first).visible, 
             true
@@ -794,6 +981,7 @@ TEST_F(DBTest, PutAndGetFunctionality4OnDiskTiering)
         );
     }
     db0.clear_db();
+    myfile.close();
     
 
     // we dont search for non-existent stuff in the testcase
