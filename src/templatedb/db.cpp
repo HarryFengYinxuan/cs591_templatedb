@@ -94,6 +94,7 @@ Value DB::get_from_level(int key, int level) {
         BPlusTree* root = restore(fn_arr.back(), path); 
         // search the tree
         ValueIndex ptr = search(root, key);
+        delete root;
         // if found, return. else keep going
         if (!ptr.null) {
             return get_from_file(
@@ -104,7 +105,7 @@ Value DB::get_from_level(int key, int level) {
         fn_arr.pop_back();
     }
     // if not found, check if there is another level
-    if (!get_level_fn(level+1).empty()) {
+    if (level+1<=maxlvl) {
         return get_from_level(key, level+1);
     }
     // checked the last level, nothing found
@@ -135,9 +136,20 @@ void DB::add2level(vector<pair<int, Value>> arr, int level) {
     comp_file.close();
     root -> fn = comp_name;
     save_node(root, path);
+    delete root;
     // update meta
     files.push_back(comp_name);
     update_meta(level, files);
+    check_roll(level);
+}
+
+void DB::check_roll(int level) {
+    if (level > maxlvl) {
+        cout << "DB FULL" << endl;
+        return;
+    }
+    vector<string> files = get_level_fn(level);
+    string path = to_string(level) + "/";
     // actions depending on policy
     if (policy == 0) {
         // leveling
@@ -145,13 +157,16 @@ void DB::add2level(vector<pair<int, Value>> arr, int level) {
         merge_level(level);
         // the # of cmpnnts is always 1
         clear_level(level);
-        move2level(path + "temp_merge", level);
+        move2level("temp_merge", level, level);
         int comp_size = read_component_size(path+"0");
-        if (comp_size > (maxsize * pow(T, level)-1)) {
+        int max_lvl_size = maxsize * pow(T, level);
+        if (comp_size > max_lvl_size) {
             // maxsize * pow(T, level) is max for this level
             // > maxsize*(pow(T, level)-1) then no more adding
             // cannot fit another one, roll
-            move2level(path + "0", level + 1);
+            move2level("0", level, level+1);
+            update_meta(level, vector<string>({}));
+            check_roll(level + 1);
         }
         // if too big, add to next level
     } else if (policy == 1) {
@@ -161,10 +176,10 @@ void DB::add2level(vector<pair<int, Value>> arr, int level) {
         if (files.size() > T) {
             // if too big, merge and add to next level
             merge_level(level);
-            // merge it, call it temp merged file
-            move2level(to_string(level)+"/temp_merge", level+1);
-            // delete all data related files in this level
             clear_level(level);
+            move2level("temp_merge", level, level+1);
+            // update_meta(level, vector<string>({}));
+            check_roll(level + 1);
         }
 
     }
@@ -179,25 +194,80 @@ int read_component_size(string fn) {
     return stoi(line);
 }
 
+// // add comp to level, and check for rolling
+// void DB::rolling_add(string comp, int level) {
+//     move2level(comp, level-1, level);
+
+//     // we moved one component to next level
+//     // that only happens after leveling full or
+//     // tiering full, so last level is empty
+//     update_meta(level-1, vector<string>({}));
+
+//     string path = to_string(level) + "/";
+
+//     // actions depending on policy
+//     if (policy == 0) {
+//         // leveling
+//         // we added to the new level, so just merge
+//         merge_level(level);
+//         // the # of cmpnnts is always 1
+//         clear_level(level);
+//         move2level("temp_merge", level, level);
+//         int comp_size = read_component_size(path+"0");
+//         if (comp_size <= (maxsize * pow(T, level)-1)) {
+//             // maxsize * pow(T, level) is max for this level
+//             // > maxsize*(pow(T, level)-1) then no more adding
+//             // cannot fit another one, roll
+//             rolling_add("0", level + 1);
+//         }
+//         // if too big, add to next level
+//     } else if (policy == 1) {
+//         // tiering
+//         // we merged and then adding to the next level
+//         // as a component, we are done
+//         vector<string> files = get_level_fn(level);
+//         if (files.size() > T) {
+//             // if too big, merge and add to next level
+//             merge_level(level);
+//             clear_level(level);
+//             rolling_add("temp_merge", level+1);
+//         }
+
+//     }
+// }
+
 // move a preexisting component to next level
 // same merge policy here
-void DB::move2level(string from, int level) {
+// we move comp from level-1 to level
+void DB::move2level(string comp, int from_level, 
+int to_level) {
     // handle possible merge
-    vector<string> files = get_level_fn(level);
+    vector<string> files = get_level_fn(to_level);
+    string path = to_string(from_level) + "/"; // from
+    // moving node
+    BPlusTree *root = restore(comp, path);
+    string old_fn = root -> fn;
+    root -> fn = to_string(files.size());
+    copy_node(root, to_level); // copy node to next level
+    root -> fn = old_fn;
+    if (from_level != to_level) {
+        delete_persist_node(root, path); // del node for cur
+        // otherwise it stores the same nodes in the same
+        // files, and they will be deleted by this
+    } else { // same level
+        remove((path + comp + ".bpt").c_str());
+    }
+    
+    delete root;
+    // moving data
     copy_file(
-        from + ".bpt", 
-        to_string(level) + "/" + 
-        to_string(files.size()) + ".bpt");
-    copy_file(
-        from + ".data", 
-        to_string(level) + "/" + 
-        to_string(files.size()) + ".data");
+        path + comp + ".data", 
+        to_string(to_level) + "/" + 
+        to_string(files.size()) + ".data"
+    );
     files.push_back(to_string(files.size()));
-    update_meta(level, files);
-
-    // del
-    remove((from+".data").c_str());
-    remove((from+".bpt").c_str());
+    update_meta(to_level, files);
+    remove((path + comp + ".data").c_str());
 }
 
 void copy_file(string path1, string path2) {
@@ -243,7 +313,11 @@ void DB::merge_level(int level)
         // we find the latest one with smallest key
         for (int i=0; i < files.size(); i++) {
             if (pairs[i].first <= min_pair.first) {
-                if (pairs[i].first == min_pair.first) {
+                if (
+                    pairs[i].first == min_pair.first &&
+                    pairs[i].first != MAX_INT
+                    // basically not dummy
+                ) {
                     // same key as last time
                     // the last thing should be discarded
                     // we read the next thing from the stream
@@ -288,9 +362,9 @@ void DB::merge_level(int level)
     }
     root -> fn = "temp_merge";
     save_node(root, path);
+    delete root;
     out.close();
 }
-
 
 void DB::put(int key, Value val)
 {
@@ -472,6 +546,7 @@ bool DB::close()
         file.close();
     }
     this->status = CLOSED;
+    // clear_db();
 
     return true;
 }
@@ -501,13 +576,25 @@ bool DB::write_to_file()
 }
 
 void DB::clear_level(int level) {
+    string path = to_string(level) + "/";
     vector<string> files = get_level_fn(level);
     while (!files.empty()) {
-        remove((files.back()+".data").c_str());
-        remove((files.back()+".bpt").c_str());
+
+        remove((path+files.back()+".data").c_str());
+        BPlusTree *root = restore(files.back(), path);
+        delete_persist_node(root, path);
+        delete root;
+        // remove((path+files.back()+".bpt").c_str());
         files.pop_back();
     }
     update_meta(level, files);
+}
+
+void DB::clear_db() {
+    for (int i=1; i<=maxlvl; i++) {
+        clear_level(i);
+    }
+    table.clear();
 }
 
 void DB::init(int p) {
@@ -522,4 +609,22 @@ void DB::init(int p) {
         ofstream myfile (folder_name + "/.meta", ios::binary);
         myfile.close();
     }
+}
+
+void DB::delete_persist_node(BPlusTree *node, string path) {
+    // delete children
+    if (!node -> is_leaf) {
+        for (int i=0; i<node -> num_keys+1; i++) {
+            delete_persist_node(node -> children[i], path);
+        }
+    }
+    
+    // delete self
+    remove((path+node->fn+".bpt").c_str());
+    // int a = 1;
+}
+
+void DB::copy_node(BPlusTree *node, int level) {
+    string path = to_string(level) + "/";
+    save_node(node, path);
 }

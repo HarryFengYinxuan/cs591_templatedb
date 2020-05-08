@@ -16,7 +16,7 @@ void increment_fn_counter() {
         // size is safe, we just add 1
         num_repr = std::to_string(num + 1);
         // pad the substring
-        while (num_repr.length() < 4) {
+        while (num_repr.length() < 5) {
             // this condition is satisfied from the start
             num_repr = '0' + num_repr;
         }
@@ -165,7 +165,8 @@ BPlusTree* restore(string fn, string path) {
 // make node and its descendants into a file
 // path is basically folder
 void save_node(BPlusTree *node, string path) {
-    ofstream outfile(path + node -> fn + ".bpt", ios::binary);
+    string outfn = path + node -> fn + ".bpt";
+    ofstream outfile(outfn, ios::binary);
     outfile << node -> is_leaf << "\n";
     outfile << node -> fn << "\n";
     outfile << node -> num_keys << "\n";

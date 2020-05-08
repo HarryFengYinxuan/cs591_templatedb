@@ -12,7 +12,6 @@ protected:
     templatedb::DB db0;
     templatedb::DB db1;
     templatedb::DB db2;
-    BPlusTree *root;
 
     templatedb::Value v1 = templatedb::Value({1, 2});
     templatedb::Value v2 = templatedb::Value({6, 10});
@@ -25,13 +24,13 @@ protected:
         db1.put(2, v1);
         db1.put(5, v2);
         db2.put(1024, v3);
-        root = new_tree();
     }
 };
 
 TEST_F(DBTest, TreeInsert)
 {
     // basic split
+    BPlusTree *root = new_tree();
     std::vector<int> input_keys{1,3,5,7,9}; 
     for (
         std::vector<int>::iterator it = input_keys.begin(); 
@@ -41,11 +40,13 @@ TEST_F(DBTest, TreeInsert)
     }
     ASSERT_EQ(root -> keys[0], 5);
     ASSERT_EQ(root -> keys[1], -1);
+    delete root;
 }
 
 TEST_F(DBTest, TreePersistence)
 {
     // operations and then save and restore
+    BPlusTree *root = new_tree();
     std::vector<int> input_keys{1,3,5,7,9}; 
     for (
         std::vector<int>::iterator it = input_keys.begin(); 
@@ -58,11 +59,13 @@ TEST_F(DBTest, TreePersistence)
     BPlusTree *temp = restore("test_temp", "tree-test/");
     ASSERT_EQ(temp -> keys[0], 5);
     ASSERT_EQ(temp -> keys[1], -1);
+    delete root;
 }
 
 TEST_F(DBTest, TreeSearch)
 {
     // operations and then save and restore
+    BPlusTree *root = new_tree();
     std::srand(0); 
     // init input
     std::vector<int> input_keys; 
@@ -107,11 +110,13 @@ TEST_F(DBTest, TreeSearch)
             true
         );
     }
+    delete root;
 }
 
 TEST_F(DBTest, TreeSearchPersist)
 {
     // operations and then save and restore
+    BPlusTree *root = new_tree();
     std::srand(0); 
     // init input
     std::vector<int> input_keys; 
@@ -136,6 +141,7 @@ TEST_F(DBTest, TreeSearchPersist)
 
     root -> fn = "test_temp2";
     save_node(root, "tree-test/");
+    delete root;
     BPlusTree *temp = restore("test_temp2", "tree-test/");
 
     // searching in tree
@@ -160,6 +166,7 @@ TEST_F(DBTest, TreeSearchPersist)
             true
         );
     }
+    delete temp;
 }
 
 
@@ -211,6 +218,7 @@ TEST_F(DBTest, PutAndGetFunctionalityInMemory)
             kv_pair.second
         );
     }
+    db0.clear_db();
 
     // we dont search for non-existent stuff in the testcase
     // because it will try to reach the disk
@@ -249,6 +257,7 @@ TEST_F(DBTest, DeleteNonExistentInMemory)
             false
         );
     }
+    db0.clear_db();
 }
 
 
@@ -294,11 +303,62 @@ TEST_F(DBTest, DeleteExistentInMemory)
             false
         );
     }
+    db0.clear_db();
+}
+
+// ===== starting to use level 1 =====
+TEST_F(DBTest, PutAndGetFunctionalityOnDiskLvling)
+{
+    std::srand(0);
+    std::vector<int> input_keys;
+    std::vector<templatedb::Value> input_vals;
+    std::unordered_map<int, templatedb::Value> result;
+    int kv_range = 100;
+    int key;
+    templatedb::Value val;
+    // lets make one item per value
+    while (1) {
+        key = std::rand()%kv_range;
+        val = templatedb::Value(
+            std::vector<int>{std::rand()%kv_range}
+        );
+
+        input_keys.push_back(key);
+        input_vals.push_back(val);
+        result[key] = val;
+
+        if (result.size() < db0.maxsize) {
+            db0.put(key, val);
+        } else {
+            // put one more to exceed the limit, then stop
+            db0.put(key, val);
+            // result.erase(key);
+            break;
+        }
+        
+    }
+
+    // searching on disk
+    for( const auto& kv_pair : result ) {
+        ASSERT_EQ(
+            db0.get(kv_pair.first).visible, 
+            true
+        );
+        ASSERT_EQ(
+            db0.get(kv_pair.first), 
+            kv_pair.second
+        );
+    }
+    db0.clear_db();
+
+    // we dont search for non-existent stuff in the testcase
+    // because it will try to reach the disk
 }
 
 
-TEST_F(DBTest, PutAndGetFunctionalityOnDisk)
+TEST_F(DBTest, PutAndGetFunctionalityOnDiskTiering)
 {
+    db0.policy = 1; // tiering
     std:srand(0);
     std::vector<int> input_keys;
     std::vector<templatedb::Value> input_vals;
@@ -339,11 +399,408 @@ TEST_F(DBTest, PutAndGetFunctionalityOnDisk)
             kv_pair.second
         );
     }
+    db0.clear_db();
 
     // we dont search for non-existent stuff in the testcase
     // because it will try to reach the disk
 }
 
+// ===== =====
+
+// ===== filling level 1 =====
+
+TEST_F(DBTest, PutAndGetFunctionality2OnDiskLvling)
+{
+    std::srand(0);
+    std::vector<int> input_keys;
+    std::vector<templatedb::Value> input_vals;
+    std::unordered_map<int, templatedb::Value> 
+        all_result;
+    int kv_range = 100;
+    int key;
+    templatedb::Value val;
+    // to mimic the behavior of components, when each result
+    // table is full, it is appended to all_result, and a 
+    // new table is created
+    for (int i=0; i<db0.T; i++) {
+        std::unordered_map<int, templatedb::Value> result;
+        // fill this table
+        while (1) {
+            key = std::rand()%kv_range;
+            val = templatedb::Value(
+                std::vector<int>{std::rand()%kv_range}
+            );
+
+            input_keys.push_back(key);
+            input_vals.push_back(val);
+            result[key] = val;
+            all_result[key] = val;
+
+            if (result.size() < db0.maxsize) {
+                db0.put(key, val);
+            } else {
+                // put one more to exceed the limit, then stop
+                db0.put(key, val);
+                // result.erase(key);
+                break;
+            }
+        }
+    }
+
+    // searching on disk
+    for( const auto& kv_pair : all_result ) {
+        ASSERT_EQ(
+            db0.get(kv_pair.first).visible, 
+            true
+        );
+        ASSERT_EQ(
+            db0.get(kv_pair.first), 
+            kv_pair.second
+        );
+    }
+    db0.clear_db();
+    
+
+    // we dont search for non-existent stuff in the testcase
+    // because it will try to reach the disk
+}
+
+TEST_F(DBTest, PutAndGetFunctionality2OnDiskTiering)
+{
+    db0.policy = 1;
+    std::srand(0);
+    std::vector<int> input_keys;
+    std::vector<templatedb::Value> input_vals;
+    std::unordered_map<int, templatedb::Value> 
+        all_result;
+    int kv_range = 100;
+    int key;
+    templatedb::Value val;
+    // to mimic the behavior of components, when each result
+    // table is full, it is appended to all_result, and a 
+    // new table is created
+    for (int i=0; i<db0.T; i++) {
+        std::unordered_map<int, templatedb::Value> result;
+        // fill this table
+        while (1) {
+            key = std::rand()%kv_range;
+            val = templatedb::Value(
+                std::vector<int>{std::rand()%kv_range}
+            );
+
+            input_keys.push_back(key);
+            input_vals.push_back(val);
+            result[key] = val;
+            all_result[key] = val;
+
+            if (result.size() < db0.maxsize) {
+                db0.put(key, val);
+            } else {
+                // put one more to exceed the limit, then stop
+                db0.put(key, val);
+                // result.erase(key);
+                break;
+            }
+        }
+    }
+
+    // searching on disk
+    for( const auto& kv_pair : all_result ) {
+        ASSERT_EQ(
+            db0.get(kv_pair.first).visible, 
+            true
+        );
+        ASSERT_EQ(
+            db0.get(kv_pair.first), 
+            kv_pair.second
+        );
+    }
+    db0.clear_db();
+    
+
+    // we dont search for non-existent stuff in the testcase
+    // because it will try to reach the disk
+}
+
+// ===== =====
+
+// ===== filling level 2 =====
+
+TEST_F(DBTest, PutAndGetFunctionality3OnDiskLvling)
+{
+    std::srand(0);
+    std::vector<int> input_keys;
+    std::vector<templatedb::Value> input_vals;
+    std::unordered_map<int, templatedb::Value> 
+        all_result;
+    int kv_range = 100;
+    int key;
+    templatedb::Value val;
+    // to mimic the behavior of components, when each result
+    // table is full, it is appended to all_result, and a 
+    // new table is created
+    for (int i=0; i<(db0.T+1); i++) {
+        std::unordered_map<int, templatedb::Value> result;
+        // fill this table
+        while (1) {
+            key = std::rand()%kv_range;
+            val = templatedb::Value(
+                std::vector<int>{std::rand()%kv_range}
+            );
+
+            input_keys.push_back(key);
+            input_vals.push_back(val);
+            result[key] = val;
+            all_result[key] = val;
+
+            if (result.size() < db0.maxsize) {
+                db0.put(key, val);
+            } else {
+                // put one more to exceed the limit, then stop
+                db0.put(key, val);
+                // result.erase(key);
+                break;
+            }
+        }
+    }
+
+    // searching on disk
+    for( const auto& kv_pair : all_result ) {
+        ASSERT_EQ(
+            db0.get(kv_pair.first).visible, 
+            true
+        );
+        ASSERT_EQ(
+            db0.get(kv_pair.first), 
+            kv_pair.second
+        );
+    }
+    db0.clear_db();
+    
+
+    // we dont search for non-existent stuff in the testcase
+    // because it will try to reach the disk
+}
+
+TEST_F(DBTest, PutAndGetFunctionality3OnDiskTiering)
+{
+    db0.policy = 1;
+    std::srand(0);
+    std::vector<int> input_keys;
+    std::vector<templatedb::Value> input_vals;
+    std::unordered_map<int, templatedb::Value> 
+        all_result;
+    int kv_range = 100;
+    int key;
+    templatedb::Value val;
+    // to mimic the behavior of components, when each result
+    // table is full, it is appended to all_result, and a 
+    // new table is created
+    for (int i=0; i<(db0.T+1); i++) {
+        std::unordered_map<int, templatedb::Value> result;
+        // fill this table
+        while (1) {
+            key = std::rand()%kv_range;
+            val = templatedb::Value(
+                std::vector<int>{std::rand()%kv_range}
+            );
+
+            input_keys.push_back(key);
+            input_vals.push_back(val);
+            result[key] = val;
+            all_result[key] = val;
+
+            if (result.size() < db0.maxsize) {
+                db0.put(key, val);
+            } else {
+                // put one more to exceed the limit, then stop
+                db0.put(key, val);
+                // result.erase(key);
+                break;
+            }
+        }
+    }
+
+    // searching on disk
+    for( const auto& kv_pair : all_result ) {
+        ASSERT_EQ(
+            db0.get(kv_pair.first).visible, 
+            true
+        );
+        ASSERT_EQ(
+            db0.get(kv_pair.first), 
+            kv_pair.second
+        );
+    }
+    db0.clear_db();
+    
+
+    // we dont search for non-existent stuff in the testcase
+    // because it will try to reach the disk
+}
+
+// ===== =====
+
+// ===== filling level mem, 1, 2 & 3 =====
+
+TEST_F(DBTest, PutAndGetFunctionality4OnDiskLvling)
+{
+    std::srand(0);
+    db0.T = 2;
+    std::vector<int> input_keys;
+    std::vector<templatedb::Value> input_vals;
+    std::unordered_map<int, templatedb::Value> 
+        all_result;
+    int kv_range = 100;
+    int key;
+    templatedb::Value val;
+    // to mimic the behavior of components, when each result
+    // table is full, it is appended to all_result, and a 
+    // new table is created
+    for (int i=0; i<(11); i++) {
+        std::unordered_map<int, templatedb::Value> result;
+        // fill this table
+        while (1) {
+            key = std::rand()%kv_range;
+            val = templatedb::Value(
+                std::vector<int>{std::rand()%kv_range}
+            );
+
+            input_keys.push_back(key);
+            input_vals.push_back(val);
+            result[key] = val;
+            all_result[key] = val;
+
+            if (result.size() < db0.maxsize) {
+                db0.put(key, val);
+            } else {
+                // put one more to exceed the limit, then stop
+                db0.put(key, val);
+                // result.erase(key);
+                break;
+            }
+        }
+    }
+    // this is for mem
+    std::unordered_map<int, templatedb::Value> result;
+    while (1) {
+        key = std::rand()%kv_range;
+        val = templatedb::Value(
+            std::vector<int>{std::rand()%kv_range}
+        );
+
+        input_keys.push_back(key);
+        input_vals.push_back(val);
+        result[key] = val;
+        all_result[key] = val;
+
+        if (result.size() < db0.maxsize) {
+            db0.put(key, val);
+        } else {
+            // put one more to exceed the limit, then stop
+            all_result.erase(key);
+            break;
+        }
+    }
+
+    // searching
+    for( const auto& kv_pair : all_result ) {
+        ASSERT_EQ(
+            db0.get(kv_pair.first).visible, 
+            true
+        );
+        ASSERT_EQ(
+            db0.get(kv_pair.first), 
+            kv_pair.second
+        );
+    }
+    db0.clear_db();
+    
+
+    // we dont search for non-existent stuff in the testcase
+    // because it will try to reach the disk
+}
+
+TEST_F(DBTest, PutAndGetFunctionality4OnDiskTiering)
+{
+    db0.policy = 1;
+    db0.T = 2;
+    std::srand(0);
+    std::vector<int> input_keys;
+    std::vector<templatedb::Value> input_vals;
+    std::unordered_map<int, templatedb::Value> 
+        all_result;
+    int kv_range = 100;
+    int key;
+    templatedb::Value val;
+    // to mimic the behavior of components, when each result
+    // table is full, it is appended to all_result, and a 
+    // new table is created
+    for (int i=0; i<(11); i++) {
+        std::unordered_map<int, templatedb::Value> result;
+        // fill this table
+        while (1) {
+            key = std::rand()%kv_range;
+            val = templatedb::Value(
+                std::vector<int>{std::rand()%kv_range}
+            );
+
+            input_keys.push_back(key);
+            input_vals.push_back(val);
+            result[key] = val;
+            all_result[key] = val;
+
+            if (result.size() < db0.maxsize) {
+                db0.put(key, val);
+            } else {
+                // put one more to exceed the limit, then stop
+                db0.put(key, val);
+                // result.erase(key);
+                break;
+            }
+        }
+    }
+    // this is for mem
+    std::unordered_map<int, templatedb::Value> result;
+    while (1) {
+        key = std::rand()%kv_range;
+        val = templatedb::Value(
+            std::vector<int>{std::rand()%kv_range}
+        );
+
+        input_keys.push_back(key);
+        input_vals.push_back(val);
+        result[key] = val;
+        all_result[key] = val;
+
+        if (result.size() < db0.maxsize) {
+            db0.put(key, val);
+        } else {
+            // put one more to exceed the limit, then stop
+            all_result.erase(key);
+            break;
+        }
+    }
+
+    // searching
+    for( const auto& kv_pair : all_result ) {
+        ASSERT_EQ(
+            db0.get(kv_pair.first).visible, 
+            true
+        );
+        ASSERT_EQ(
+            db0.get(kv_pair.first), 
+            kv_pair.second
+        );
+    }
+    db0.clear_db();
+    
+
+    // we dont search for non-existent stuff in the testcase
+    // because it will try to reach the disk
+}
+
+// ===== =====
 
 // TEST_F(DBTest, ScanFunctionalityInMemory)
 // {

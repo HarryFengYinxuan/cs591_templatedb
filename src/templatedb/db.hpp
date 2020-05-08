@@ -79,6 +79,7 @@ public:
 
     bool close();
     bool load_data_file(std::string & fname); 
+    void clear_db();
     // one off open?
     // when do you load? only memory?
 
@@ -117,7 +118,13 @@ private:
     // std::pair<int, int> parse_fn(string fn); // parse filename
     // list files. it return {fn}. {fn}.bpt will be the tree
     // {fn}.data will be the actual data
-    void move2level(std::string path1, int level);
+    void move2level(std::string comp, int from_level, 
+        int to_level);
+    // void rolling_add(std::string from, int level);
+    void check_roll(int level);
+    void delete_persist_node(
+        BPlusTree *node, std::string path);
+    void copy_node(BPlusTree *node, int level);
 
     // how many components does the nth level have
     // std::unordered_map<int, int> level2components;
